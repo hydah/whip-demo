@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<style type="text/css">
+    #user_a {
+        float: left;
+        width: 50%;
+    }
+
+    #user_b {
+        float: right;
+        width: 50%;
+    }
+
+    textarea {
+        color: #444;
+        font-size: 0.6em;
+        font-weight: 200;
+        height: 3.0em;
+        padding: 2px;
+        width: calc(50% - 10px);
+    }
+</style>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+    <script>
+        let sdkAppID = 1400188366;
+		// let sdkAppID = 1400669058;
+        let stopPubLocaltion;
+        let stopPlayLocation;
+        let publishPc;
+        let mediaStream;
+        let playMediaStream;
+
+        let startABut;
+        let stopABut;
+        let startBBut;
+        let stopBBut;
+
+
+        let sendChannelA;
+        let sendChannelB;
+
+        let dataChannelSendA;
+        let dataChannelReceiveA;
+        let sendButtonA;
+
+        let dataChannelSendB;
+        let dataChannelReceiveB;
+        let sendButtonB;
+
+        const constraints = {
+            video: { width: { exact: 640 }, height: { exact: 480 } },
+            audio: true
+        }
+
+        window.onload = function () {
+            signal_addr = document.getElementById("signalAddr").value;
+
+            let streamId = parseInt(Math.floor(Math.random()*100000));
+            document.getElementById("streamId").value = streamId;
+            document.getElementById("userId").value = 'user_' + parseInt(Math.random() * 1000000);
+            document.getElementById("streamId2").value = streamId;
+            document.getElementById("userId2").value = 'user_' + parseInt(Math.random() * 1000000);
+
+            videoCodec_a = document.getElementById('videoCodec_a');
+            audioCodec_a = document.getElementById('audioCodec_a');
+            data_a = document.getElementById('data_a');
+
+            videoCodec_b = document.getElementById('videoCodec_b');
+            audioCodec_b = document.getElementById('audioCodec_b');
+            data_b = document.getElementById('data_b');
+
+            startABut = document.querySelector('button#start_a');
+            stopABut = document.querySelector('button#stop_a');
+
+            startBBut = document.querySelector('button#start_b');
+            stopBBut = document.querySelector('button#stop_b');
+
+
+            sendButtonA = document.querySelector('button#sendButtonA');
+            sendButtonB = document.querySelector('button#sendButtonB');
+            dataChannelSendA = document.querySelector('textarea#dataChannelSendA');
+            dataChannelReceiveA = document.querySelector('textarea#dataChannelReceiveA');
+            dataChannelSendB = document.querySelector('textarea#dataChannelSendB');
+            dataChannelReceiveB = document.querySelector('textarea#dataChannelReceiveB');
+
+            muteVideoABut = document.querySelector('button#mute_video_a');
+            unmuteVideoABut = document.querySelector('button#unmute_video_a');
+            addAudioABut = document.querySelector('button#add_audio_a');
+            removeAudioABut = document.querySelector('button#remove_audio_a');
+            addVideoABut = document.querySelector('button#add_video_a');
+            removeVideoABut = document.querySelector('button#remove_video_a');
+            getStatsABut = document.querySelector('button#getstata_a');
+        }
+
+        async function getUserSig(userId) {
+
+            let res = await fetch("http://9.139.14.113:8080/gen_usersig", {
+                method: "post",
+                headers: {
+                    'Content-Type': 'application/json',
+                    "origin": "https://web.sdk.qcloud.com"
+                },
+                mode: 'cors',
+                body: JSON.stringify({
+                    "pwd": "12345678",
+                    "appid": sdkAppID,
+                    "roomnum": 100,
+                    "privMap": 255,
+                    "identifier": userId,
+                    "accounttype": 14418,
+                })
+            })
+
+            if (res.status != 200) {
+                console.error("user sig failed", res.statusText)
+                return
+            }
+            result = await res.json()
+            console.log("result is ", result)
+            return result["data"]["userSig"]
+        }
+
+        async function postAPI(method, url, data, datatype) {
+            console.log(url, data)
+            let res = await fetch(url, {
+                method: method,
+                headers: {
+                    'content-type': datatype || 'application/sdp'
+                },
+                body: data
+            })
+
+            console.log(res)
+            let response = await res.text()
+
+            return [res.status, response, res.headers.get("Location")]
+        }
+
+        async function start_a() {
+            signal_addr = document.getElementById("signalAddr").value;
+            let streamId = document.getElementById("streamId").value;
+            let userId = document.getElementById("userId").value;
+            stopABut.disabled = false;
+            dataChannelSendA.placeholder = "";
+            if (streamId == "" || userId == "") {
+                alert("input streamId/userId")
+                return
+            }
+
+            let videoElement = document.getElementById('publish');
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            mediaStream = stream;
+            videoElement.srcObject = stream;
+
+            let pc = new RTCPeerConnection();
+            publishPc = pc;
+
+            // enable data channel
+            if (data_a.options[data_a.selectedIndex].value == "enable") {
+                datachannel = pc.createDataChannel('message', { ordered: true });
+                sendChannelA = datachannel;
+                // datachannel.binaryType = 'arraybuffer';
+                datachannel.addEventListener('open', () => {
+                    console.log('A datachannel open');
+                    const readyState = sendChannelA.readyState;
+                    console.log('A Send channel state is: ' + readyState);
+                    if (readyState === 'open') {
+                        dataChannelSendA.disabled = false;
+                        dataChannelSendA.focus();
+                        sendButtonA.disabled = false;
+                    } else {
+                        dataChannelSendA.disabled = true;
+                        sendButtonA.disabled = true;
+                    }
+                });
+
+                datachannel.addEventListener('message', (event) => {
+                    var dec = new TextDecoder("utf-8");
+
+                    dataChannelReceiveA.value = dec.decode(event.data);
+                    console.log("a receive ", dec.decode(event.data));
+                });
+            }
+
+            if (audioCodec_a.options[audioCodec_a.selectedIndex].value == "opus") {
+                await pc.addTransceiver(stream.getAudioTracks()[0], {
+                    direction: "sendonly",
+                    streams: [stream],
+                });
+            }
+
+            let vcodec = videoCodec_a.options[videoCodec_a.selectedIndex];
+            if (vcodec.value != "disable") {
+                await pc.addTransceiver(stream.getVideoTracks()[0], {
+                    direction: "sendonly",
+                    streams: [stream],
+                });
+            }
+
+            const offer = await pc.createOffer();
+            console.log("go to publish ", offer.sdp)
+            await pc.setLocalDescription(offer);
+
+            let userSig = await getUserSig(userId);
+            // let userSig = 'eJw1jcEKgkAURX9FZh36NGe0oI0kQogJBq3VGadHGMMbiST699Rsey7n3De75JVrUbO9w0Siq1qbIo*S9qpHKkPquyIkWY7nNPKOWZN6TUInL7MHtnEWVb0Mkppsn3MeAMDKrbzXxqCclxDAj*OtEOv2VDTfBS78KwP2S0PwYCcE8HjlKNVjwA5-Qof2pmiKsc8XEz8zlw__';
+
+            let url = "https://" + signal_addr + "/v1/push/" + streamId +
+                '?sdkappid=' + sdkAppID +
+                '&userid=' + userId +
+                '&usersig=' + userSig
+
+            if (vcodec.value != "disable" && vcodec.value != "h264") {
+                url += "&prefervcodec=" + prefercodec
+            }
+
+            console.log("here go to req ", url)
+
+            let [code, res, localtion] = await postAPI('post', url, offer.sdp)
+            if (code != 200 && code != 201) {
+                console.log("pub failed, code", code, "res is: ", res)
+                startABut.disabled = false;
+                stopABut.disabled = true;
+                let videoElement = document.getElementById('publish');
+                videoElement.removeAttribute('src'); // empty source
+                mediaStream.getVideoTracks()[0].stop();
+                mediaStream.getAudioTracks()[0].stop();
+                sendButtonA.disabled = true;
+                getStatsABut.disabled = true
+                muteVideoABut.disabled = true
+                unmuteVideoABut.disabled = true
+                removeVideoABut.disabled = true
+                addVideoABut.disabled = true
+                removeAudioABut.disabled = true
+                addAudioABut.disabled = true
+                return
+            }
+
+            answer = new RTCSessionDescription({
+                type: 'answer',
+                sdp: res
+            })
+            await pc.setRemoteDescription(answer);
+            console.log("get publish answer", res);
+            console.log("stop pub location is ", localtion)
+            stopPubLocaltion = localtion;
+            startABut.disabled = true;
+            getStatsABut.disabled = false
+            if (vcodec.value != "disable") {
+                muteVideoABut.disabled = false
+                unmuteVideoABut.disabled = false
+                removeVideoABut.disabled = false
+                addVideoABut.disabled = false
+            }
+            if (audioCodec_a.options[audioCodec_a.selectedIndex].value != "disable") {
+                removeAudioABut.disabled = false
+                addAudioABut.disabled = false
+            }
+        }
+
+        async function stop_a() {
+            if (stopPubLocaltion == null) {
+                alert("pub first")
+                return
+            }
+            await postAPI('delete', stopPubLocaltion, "")
+            await reset_a()
+            startABut.disabled = false;
+            stopABut.disabled = true;
+            let videoElement = document.getElementById('publish');
+            videoElement.removeAttribute('src'); // empty source
+            mediaStream.getVideoTracks()[0].stop();
+            mediaStream.getAudioTracks()[0].stop();
+            sendButtonA.disabled = true;
+            getStatsABut.disabled = true
+            muteVideoABut.disabled = true
+            unmuteVideoABut.disabled = true
+            removeVideoABut.disabled = true
+            addVideoABut.disabled = true
+            removeAudioABut.disabled = true
+            addAudioABut.disabled = true
+        }
+
+        async function reset_a() {
+            audioCodec_a.selectedIndex = 0;
+            videoCodec_a.selectedIndex = 0;
+            data_a.selectedIndex = 1;
+        }
+        async function reset_b() {
+            audioCodec_b.selectedIndex = 0;
+            videoCodec_b.selectedIndex = 0;
+            data_b.selectedIndex = 1;
+        }
+
+        async function getStats() {
+            if (stopPubLocaltion == null) {
+                alert("pub first")
+                return
+            }
+            let data = JSON.stringify({
+                "cmd": "getstats",
+                "data": {},
+            })
+            await postAPI('post', stopPubLocaltion, data, "application/json")
+        }
+
+        async function muteVideo() {
+            if (stopPubLocaltion == null) {
+                alert("pub first")
+                return
+            }
+            publishPc.getTransceivers().forEach(transceiver => {
+                if (transceiver.sender.track.kind == "video") {
+                    transceiver.sender.track.enabled = false;
+                }
+            });
+
+            let data = JSON.stringify({
+                "cmd": "mute",
+                "data": { "video": true, "audio": false },
+            })
+            await postAPI('post', stopPubLocaltion, data, "application/json")
+        }
+
+        async function unmuteVideo() {
+            if (stopPubLocaltion == null) {
+                alert("pub first")
+                return
+            }
+            publishPc.getTransceivers().forEach(transceiver => {
+                if (transceiver.sender.track.kind == "video") {
+                    transceiver.sender.track.enabled = true;
+                }
+            });
+            let data = JSON.stringify({
+                "cmd": "mute",
+                "data": { "video": false, "audio": false },
+            })
+            await postAPI('post', stopPubLocaltion, data, "application/json")
+        }
+
+        async function addTrack(kind) {
+            if (stopPubLocaltion == null) {
+                alert("pub first")
+                return
+            }
+
+            if (kind == "video") {
+                await publishPc.addTransceiver(mediaStream.getVideoTracks()[0], {
+                    direction: "sendonly",
+                    streams: [mediaStream],
+                });
+            }
+            if (kind == "audio") {
+                await publishPc.addTransceiver(mediaStream.getAudioTracks()[0], {
+                    direction: "sendonly",
+                    streams: [mediaStream],
+                });
+            }
+
+
+            const offer = await publishPc.createOffer();
+            console.log("go to add", kind, offer.sdp)
+            await publishPc.setLocalDescription(offer);
+
+            let data = JSON.stringify({
+                "cmd": "addtrack",
+                "data": { "sdp": offer.sdp, "kind": "video" },
+            })
+            let [code, res, localtion] = await postAPI('post', stopPubLocaltion, data, "application/json")
+            if (code != 200 && code != 201) {
+                console.log("addTrack failed, code", code, "res is: ", res)
+                return
+            }
+
+            answer = new RTCSessionDescription({
+                type: 'answer',
+                sdp: res
+            })
+            await publishPc.setRemoteDescription(answer);
+        }
+
+        async function removeTrack(kind) {
+            if (stopPubLocaltion == null) {
+                alert("pub first")
+                return
+            }
+
+            publishPc.getTransceivers().forEach(transceiver => {
+                if (transceiver.sender.track.kind == kind) {
+                    transceiver.stop();
+                }
+            });
+
+            const offer = await publishPc.createOffer();
+            console.log("go to remove", kind, offer.sdp)
+            await publishPc.setLocalDescription(offer);
+
+            let data = JSON.stringify({
+                "cmd": "removetrack",
+                "data": { "sdp": offer.sdp, "kind": "video" },
+            })
+            let [code, res, localtion] = await postAPI('post', stopPubLocaltion, data, "application/json")
+            if (code != 200 && code != 201) {
+                console.log("removeTrack failed, code", code, "res is: ", res)
+                return
+            }
+
+            answer = new RTCSessionDescription({
+                type: 'answer',
+                sdp: res
+            })
+            await publishPc.setRemoteDescription(answer);
+        }
+
+        async function send_a() {
+            const data = dataChannelSendA.value;
+            sendChannelA.send(data);
+            console.log('A Sent Data: ' + data);
+        }
+
+        async function send_b() {
+            const data = dataChannelSendB.value;
+            sendChannelB.send(data);
+            console.log('B Sent Data: ' + data);
+        }
+        async function start_b() {
+            stopBBut.disabled = false;
+            dataChannelSendB.placeholder = "";
+            signal_addr = document.getElementById("signalAddr").value;
+            let streamId = document.getElementById("streamId2").value;
+            let userId = document.getElementById("userId2").value;
+            if (streamId == "" || userId == "") {
+                alert("input streamId/userId")
+                return
+            }
+
+            let pc = new RTCPeerConnection();
+            let videoElement = document.getElementById('play');
+            pc.addEventListener('track', ev => {
+                console.log('pc received track ev', ev);
+                if (videoElement.srcObject !== ev.streams[0] && ev.streams[0]) {
+                    videoElement.srcObject = ev.streams[0];
+                    playMediaStream = ev.streams[0];
+                    console.log('pc received remote stream', ev);
+                }
+            });
+
+            // enable data channel
+            if (data_b.options[data_b.selectedIndex].value == "enable") {
+                datachannel = pc.createDataChannel('message', { ordered: true });
+                sendChannelB = datachannel;
+                // datachannel.binaryType = 'arraybuffer';
+                datachannel.addEventListener('open', () => {
+                    console.log('datachannel open');
+                    const readyState = sendChannelB.readyState;
+                    console.log('Send channel state is: ' + readyState);
+                    if (readyState === 'open') {
+                        dataChannelSendB.disabled = false;
+                        dataChannelSendB.focus();
+                        sendButtonB.disabled = false;
+                    } else {
+                        dataChannelSendB.disabled = true;
+                        sendButtonB.disabled = true;
+                    }
+                });
+
+                datachannel.addEventListener('message', (event) => {
+                    var dec = new TextDecoder("utf-8");
+
+                    dataChannelReceiveB.value = dec.decode(event.data);
+                    console.log("b receive ", dec.decode(event.data));
+                });
+            }
+
+            if (audioCodec_b.options[audioCodec_b.selectedIndex].value == "opus") {
+                await pc.addTransceiver("audio", {
+                    direction: "recvonly",
+                });
+            }
+
+            let vcodec = videoCodec_b.options[videoCodec_b.selectedIndex];
+            if (vcodec.value != "disable") {
+                await pc.addTransceiver("video", {
+                    direction: "recvonly",
+                });
+            }
+
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+
+            let userSig = await getUserSig(userId);
+            //let userSig = 'eJw1jdEKgjAYRl9Fdh3yb3NTA28KogsLKn0Aa1v9huE2ESl699Ls9nyc871IkZ9Cj1eyDEg95DXsK3s4Qg8NH9ax5Wxri3NUul23usRlYQzflE-nM7IIJlUPLTr9takQggHAzL26V22LalwiAJokXMp567Ub71gI-0qHzdSQgqVS0pTPHJV*dGjwJxj0N*0AGHl-AD5dM-M_';
+			// let userSig = 'eJwsjsFOg0AQQP9lrtVmYJdlS*JBCUWLxUSmJnoxxF2WQatIaQs1-rux7fW95OX9AN0XUzu03FmIPNRaSUS8OGI29rPnim0HESSPeXyZqH4*NFwEC96*uQcSY2rnK9eV9cE*31SD229J5PVYZNqIVDc*SUyKl9eydHBqbsx72bZsIPIkolIzDPTZsIMIbvX6KVXL7DqmQ2foazM0kvYfVVaP9d2Edvm3iBcTJcLV8uqc7Hn9-64C6QV*OAtPdHe89qcIv38BAAD---i9RRE_';
+            let url = "https://" + signal_addr + "/v1/play/" + streamId +
+                '?sdkappid=' + sdkAppID +
+                '&userid=' + userId +
+                '&usersig=' + userSig
+
+            if (vcodec.value != "disable" && vcodec.value != "h264") {
+                url += "&prefervcodec=" + prefercodec
+            }
+
+            let [code, res, location] = await postAPI('post', url, offer.sdp)
+            if (code != 200 && code != 201) {
+                console.log("play failed, code", code, "res is: ", res)
+                return
+            }
+
+            answer = new RTCSessionDescription({
+                type: 'answer',
+                sdp: res
+            })
+            await pc.setRemoteDescription(answer);
+
+            console.log("stop play location is ", location);
+            stopPlayLocation = location;
+            startBBut.disabled = true;
+        }
+
+        async function stop_b() {
+            if (stopPlayLocation == null) {
+                alert("play first")
+                return
+            }
+            await postAPI('delete', stopPlayLocation, "")
+            await reset_b()
+
+            startBBut.disabled = false;
+            stopBBut.disabled = true;
+            sendButtonB.disabled = true;
+
+            let videoElement = document.getElementById('play');
+            videoElement.removeAttribute('src'); // empty source
+            playMediaStream.getVideoTracks()[0].stop();
+            playMediaStream.getAudioTracks()[0].stop();
+        }
+
+    </script>
+</head>
+
+<body>
+    <div>
+        signal addr: <input type="text" size="50" id="signalAddr" name="sginal_addr" value="itest.rtc.qq.com">
+        <HR style="border:3 double #987cb9" width="100%" color=#987cb9 SIZE=1 align="left">
+    </div>
+
+    <div id="user_a">
+        <br>
+        streamId: <input type="text" size="10" id="streamId" name="userId" value="whip001">
+        &nbsp userId: <input type="text" size="10" id="userId" name="userId" value="fisher001">
+        <HR style="border:3 double #987cb9" width="60%" color=#987cb9 SIZE=1 align="left">
+        <button onclick="reset_a()">reset</button>
+        <span> &nbsp video:</span>
+        <select id="videoCodec_a">
+            <option selected value="h264">H264</option>
+            <option value="vp8">VP8</option>
+            <!-- <option value="av1">AV1</option>
+            <option value="vp9">VP9</option> -->
+            <option value="disable">Disable</option>
+        </select>
+        <span>audio:</span>
+        <select id="audioCodec_a">
+            <option selected value="opus">OPUS</option>
+            <option value="disable">Disable</option>
+        </select>
+        <span>data:</span>
+        <select id="data_a">
+            <option value="enable">Enable</option>
+            <option selected value="disable">Disable</option>
+        </select>
+        <br>
+        <HR style="border:3 double #987cb9" width="60%" color=#987cb9 SIZE=1 align="left">
+        <br>
+        <button id="start_a" onclick="start_a()"> start </button>
+        <button id="stop_a" onclick="stop_a()" disabled> stop</button>
+        <HR style="border:3 double #987cb9" width="60%" color=#987cb9 SIZE=3 align="left">
+        <div id="container">
+            <button id="sendButtonA" onclick="send_a()" disabled>Send</button>
+            <div id="sendReceive">
+                <div id="send">
+                    <h3>Send</h3>
+                    <textarea id="dataChannelSendA" disabled
+                        placeholder="Press Start, enter some text, then press Send."></textarea>
+                </div>
+                <div id="receive">
+                    <h3>Receive</h3>
+                    <textarea id="dataChannelReceiveA" disabled></textarea>
+                </div>
+            </div>
+        </div>
+        <br>
+        <HR style="border:3 double #987cb9" width="60%" color=#987cb9 SIZE=3 align="left">
+        <video id="publish" width="480" height="360" controls="controls" autoplay=""></video>
+        <br>
+        <button id="mute_video_a" onclick="muteVideo()" disabled>mute_video</button>
+        <button id="unmute_video_a" onclick="unmuteVideo()" disabled>unmute_video</button>
+        <br>
+        <button id="add_audio_a" onclick="addTrack('audio')" disabled>add_audio</button>
+        <button id="remove_audio_a" onclick="removeTrack('audio')" disabled>remove_audio</button>
+        <br>
+        <button id="add_video_a" onclick="addTrack('video')" disabled>add_video</button>
+        <button id="remove_video_a" onclick="removeTrack('video')" disabled>remove_video</button>
+        <br>
+        <button id="getstata_a" onclick="getStats()" disabled>getstats</button>
+    </div>
+
+    <div id="user_b">
+        <br>
+        streamId: <input type="text" size="10" id="streamId2" name="streamId" value="whip001">
+        &nbspuserId: <input type="text" size="10" id="userId2" name="userId" value="fisher002">
+        <br>
+        <HR style="border:3 double #987cb9" width="60%" color=#987cb9 SIZE=1 align="left">
+        <button onclick="reset_b()">reset</button>
+        <span> &nbsp video:</span>
+        <select id="videoCodec_b">
+            <option selected value="h264">H264</option>
+            <option value="vp8">VP8</option>
+            <!-- <option value="av1">AV1</option>
+                <option value="vp9">VP9</option> -->
+            <option value="disable">Disable</option>
+        </select>
+        <span>audio:</span>
+        <select id="audioCodec_b">
+            <option selected value="opus">OPUS</option>
+            <option value="disable">Disable</option>
+        </select>
+        <span>data:</span>
+        <select id="data_b">
+            <option value="enable">Enable</option>
+            <option selected value="disable">Disable</option>
+        </select>
+        <HR style="border:3 double #987cb9" width="60%" color=#987cb9 SIZE=1 align="left">
+        <br>
+        <button id="start_b" onclick="start_b()"> start </button>
+        <button id="stop_b" onclick="stop_b()" disabled> stop</button>
+        <br>
+        <HR style="border:3 double #987cb9" width="60%" color=#987cb9 SIZE=3 align="left">
+
+        <div id="container">
+            <div id="buttons">
+                <button id="sendButtonB" onclick="send_b()" disabled>Send</button>
+            </div>
+
+            <div id="sendReceive">
+                <div id="send">
+                    <h3>Send</h3>
+                    <textarea id="dataChannelSendB" disabled
+                        placeholder="Press Start, enter some text, then press Send."></textarea>
+                </div>
+                <div id="receive">
+                    <h3>Receive</h3>
+                    <textarea id="dataChannelReceiveB" disabled></textarea>
+                </div>
+            </div>
+        </div>
+        <br>
+        <HR style="border:3 double #987cb9" width="60%" color=#987cb9 SIZE=3 align="left">
+
+        <video id="play" width="480" height="360" controls="controls" autoplay="autoplay"></video>
+        <br>
+
+    </div>
+
+
+</body>
+
+</html>
